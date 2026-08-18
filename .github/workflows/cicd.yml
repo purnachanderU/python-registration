@@ -1,0 +1,172 @@
+name: Python Registration CI/CD
+
+on:
+  push:
+    branches:
+      - dev
+      - stage
+      - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: python-registration
+  EKS_CLUSTER: eksdemo
+
+jobs:
+
+  build-and-deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ------------------------------------------------
+      # 1. Checkout
+      # ------------------------------------------------
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+
+      # ------------------------------------------------
+      # 2. Configure AWS
+      # ------------------------------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # ------------------------------------------------
+      # 3. Login to ECR
+      # ------------------------------------------------
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      # ------------------------------------------------
+      # 4. Set image variables
+      # ------------------------------------------------
+
+      - name: Set image variables
+        id: image
+        run: |
+
+          ACCOUNT_ID=$(aws sts get-caller-identity \
+            --query Account \
+            --output text)
+
+          ECR_REGISTRY=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          echo "ECR_REGISTRY=$ECR_REGISTRY" >> $GITHUB_ENV
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+          echo "Image:"
+          echo "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+
+      # ------------------------------------------------
+      # 5. Build Docker image
+      # ------------------------------------------------
+
+      - name: Build Docker image
+        run: |
+
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+
+
+      # ------------------------------------------------
+      # 6. Push Docker image to ECR
+      # ------------------------------------------------
+
+      - name: Push image to ECR
+        run: |
+
+          docker push \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+
+      # ------------------------------------------------
+      # 7. Configure kubeconfig
+      # ------------------------------------------------
+
+      - name: Configure kubectl
+        run: |
+
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name $EKS_CLUSTER
+
+
+      # ------------------------------------------------
+      # 8. Install Helm
+      # ------------------------------------------------
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+
+      # ------------------------------------------------
+      # 9. Select environment
+      # ------------------------------------------------
+
+      - name: Set deployment environment
+        run: |
+
+          if [ "${GITHUB_REF_NAME}" = "dev" ]; then
+            echo "NAMESPACE=dev" >> $GITHUB_ENV
+            echo "VALUES_FILE=values-dev.yaml" >> $GITHUB_ENV
+
+          elif [ "${GITHUB_REF_NAME}" = "stage" ]; then
+            echo "NAMESPACE=stage" >> $GITHUB_ENV
+            echo "VALUES_FILE=values-stage.yaml" >> $GITHUB_ENV
+
+          elif [ "${GITHUB_REF_NAME}" = "prod" ]; then
+            echo "NAMESPACE=prod" >> $GITHUB_ENV
+            echo "VALUES_FILE=values-prod.yaml" >> $GITHUB_ENV
+          fi
+
+
+      # ------------------------------------------------
+      # 10. Helm deployment
+      # ------------------------------------------------
+
+      - name: Deploy application using Helm
+        run: |
+
+          helm upgrade --install python-registration \
+            ./helm/python-registration \
+            --namespace $NAMESPACE \
+            --create-namespace \
+            -f ./helm/python-registration/$VALUES_FILE \
+            --set pythonApp.image.repository=$ECR_REGISTRY/$ECR_REPOSITORY \
+            --set pythonApp.image.tag=$IMAGE_TAG
+
+
+      # ------------------------------------------------
+      # 11. Verify deployment
+      # ------------------------------------------------
+
+      - name: Verify deployment
+        run: |
+
+          kubectl get pods \
+            -n $NAMESPACE
+
+          kubectl get svc \
+            -n $NAMESPACE
+
+          kubectl rollout status deployment/python-app \
+            -n $NAMESPACE \
+            --timeout=180s
