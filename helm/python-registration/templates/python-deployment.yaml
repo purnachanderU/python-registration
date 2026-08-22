@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: python-app
+
+spec:
+  replicas: {{ .Values.pythonApp.replicaCount }}
+
+  selector:
+    matchLabels:
+      app: python-app
+
+  template:
+    metadata:
+      labels:
+        app: python-app
+
+    spec:
+      containers:
+
+        - name: python-app
+
+          image: "{{ .Values.pythonApp.image.repository }}:{{ .Values.pythonApp.image.tag }}"
+
+          imagePullPolicy: {{ .Values.pythonApp.image.pullPolicy }}
+
+          ports:
+            - containerPort: {{ .Values.pythonApp.containerPort }}
+
+          env:
+
+            - name: DB_HOST
+              value: "{{ include "python-registration.fullname" . }}-mysql"
+
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "python-registration.fullname" . }}-mysql"
+                  key: username
+
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "python-registration.fullname" . }}-mysql"
+                  key: password
+
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "python-registration.fullname" . }}-mysql"
+                  key: database
+
+          resources:
+            {{- toYaml .Values.pythonApp.resources | nindent 12 }}

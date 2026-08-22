@@ -1,0 +1,18 @@
+pythonApp:
+  replicaCount: 2
+
+  image:
+    repository: "208357522135.dkr.ecr.us-east-1.amazonaws.com/python-registration"
+    tag: "uat"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: LoadBalancer
+    port: 5000
+    targetPort: 5000
+
+mysql:
+  persistence:
+    enabled: true
+    storageClass: gp3
+    size: 10Gi
