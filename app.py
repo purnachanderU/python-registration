@@ -110,3 +110,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=5000
     )
+ubuntu@ip-172-31-39-112:~/Python-registration$ cat requirements.txt
+Flask==3.1.0
+mysql-connector-python==9.0.0
