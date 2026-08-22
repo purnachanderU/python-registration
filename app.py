@@ -9,7 +9,7 @@ app = Flask(__name__)
 def get_db_connection():
 
     connection = mysql.connector.connect(
-        host=os.getenv("DB_HOST", "mysql"),
+        host=os.getenv("DB_HOST", "python-registration-mysql"),
         port=3306,
         user=os.getenv("DB_USER", "appuser"),
         password=os.getenv("DB_PASSWORD", "apppassword"),
