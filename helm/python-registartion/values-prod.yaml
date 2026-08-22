@@ -1,0 +1,15 @@
+pythonApp:
+  replicaCount: 3
+
+  image:
+    repository: "208357522135.dkr.ecr.us-east-1.amazonaws.com/python-registration"
+    tag: "prod"
+
+  service:
+    type: LoadBalancer
+
+mysql:
+  persistence:
+    enabled: true
+    storageClass: gp3
+    size: 20Gi
