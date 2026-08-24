@@ -1,0 +1,80 @@
+from flask import Flask, render_template
+import requests
+from requests.auth import HTTPBasicAuth
+
+app = Flask(__name__)
+
+JENKINS_URL = "http://localhost:8080"
+USERNAME = "admin"
+TOKEN = "your-jenkins-api-token"
+
+
+@app.route("/")
+def dashboard():
+
+    url = f"{JENKINS_URL}/api/json"
+
+    response = requests.get(
+        url,
+        auth=HTTPBasicAuth(USERNAME, TOKEN)
+    )
+
+    jobs = response.json()["jobs"]
+
+    job_details = []
+
+    for job in jobs:
+
+        build_url = job["url"] + "lastBuild/api/json"
+
+        build_response = requests.get(
+            build_url,
+            auth=HTTPBasicAuth(USERNAME, TOKEN)
+        )
+
+        if build_response.status_code == 200:
+
+            build = build_response.json()
+
+            job_details.append({
+                "name": job["name"],
+                "build": build.get("number"),
+                "status": build.get("result")
+            })
+
+    return render_template(
+        "index.html",
+        jobs=job_details
+    )
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+	
+
+========================================================
+
+import boto3
+
+ec2 = boto3.client("ec2")
+
+response = ec2.describe_instances()
+
+for reservation in response["Reservations"]:
+    for instance in reservation["Instances"]:
+
+        instance_id = instance["InstanceId"]
+        tags = instance.get("Tags", [])
+
+        environment = None
+
+        for tag in tags:
+            if tag["Key"] == "Environment":
+                environment = tag["Value"]
+
+        if environment == "Production":
+            print(f"{instance_id}: Environment=Production")
+        elif environment is None:
+            print(f"ALERT: {instance_id}: Environment tag is missing")
+        else:
+            print(f"WARNING: {instance_id}: Environment={environment}")
