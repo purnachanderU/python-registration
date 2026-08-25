@@ -1,128 +1,129 @@
+```groovy
 pipeline {
 
     agent any
 
-    environment {
+    options {
+        skipDefaultCheckout(true)
+        timestamps()
+    }
 
+    environment {
         AWS_REGION     = 'us-east-1'
         ECR_REPOSITORY = 'python-registration'
         EKS_CLUSTER    = 'eksdemo'
-
-        ECR_REGISTRY = ''
-        IMAGE_TAG    = ''
-        NAMESPACE    = ''
-        VALUES_FILE  = ''
     }
 
     stages {
 
         // ============================================================
-        // 1. Checkout
+        // 1. CHECKOUT
         // ============================================================
 
         stage('Checkout') {
-
             steps {
-
                 checkout scm
 
                 sh '''
                     echo "========================================"
-                    echo "Current Branch"
+                    echo "Git Information"
                     echo "========================================"
 
+                    echo "Current Branch:"
                     git branch --show-current
 
-                    echo "========================================"
-                    echo "Current Commit"
-                    echo "========================================"
-
+                    echo "Current Commit:"
                     git rev-parse --short HEAD
+
+                    echo "Git Remote:"
+                    git remote -v
+
+                    echo "========================================"
                 '''
             }
         }
 
 
         // ============================================================
-        // 2. Configure AWS
+        // 2. CONFIGURE AWS
         // ============================================================
 
         stage('Configure AWS') {
-
             steps {
-
                 sh '''
                     echo "========================================"
-                    echo "AWS Identity"
+                    echo "AWS Information"
                     echo "========================================"
 
+                    echo "AWS Identity:"
                     aws sts get-caller-identity
 
-                    echo "========================================"
-                    echo "Checking EKS Cluster"
-                    echo "========================================"
+                    echo ""
+                    echo "Checking EKS Cluster: ${EKS_CLUSTER}"
 
                     aws eks describe-cluster \
-                      --region ${AWS_REGION} \
-                      --name ${EKS_CLUSTER} \
-                      --query "cluster.status" \
-                      --output text
+                        --region ${AWS_REGION} \
+                        --name ${EKS_CLUSTER} \
+                        --query "cluster.status" \
+                        --output text
+
+                    echo "========================================"
                 '''
             }
         }
 
 
         // ============================================================
-        // 3. Set Image Variables
+        // 3. SET IMAGE VARIABLES
         // ============================================================
 
         stage('Set Image Variables') {
-
             steps {
-
                 script {
 
-                    env.ACCOUNT_ID = sh(
+                    def accountId = sh(
                         script: '''
                             aws sts get-caller-identity \
-                              --query Account \
-                              --output text
+                                --query Account \
+                                --output text
                         ''',
                         returnStdout: true
                     ).trim()
 
-
-                    env.ECR_REGISTRY =
-                        "${env.ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
-
-
-                    env.IMAGE_TAG = sh(
-                        script: 'git rev-parse --short=7 HEAD',
+                    def imageTag = sh(
+                        script: '''
+                            git rev-parse --short=7 HEAD
+                        ''',
                         returnStdout: true
                     ).trim()
 
+                    env.ACCOUNT_ID = accountId
+
+                    env.ECR_REGISTRY =
+                        "${accountId}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
+
+                    env.IMAGE_TAG = imageTag
 
                     echo "========================================"
                     echo "Image Information"
                     echo "========================================"
-
                     echo "AWS Account : ${env.ACCOUNT_ID}"
                     echo "ECR Registry: ${env.ECR_REGISTRY}"
                     echo "Repository  : ${env.ECR_REPOSITORY}"
                     echo "Image Tag   : ${env.IMAGE_TAG}"
+                    echo "Full Image  : ${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.IMAGE_TAG}"
+                    echo "========================================"
                 }
             }
         }
 
 
         // ============================================================
-        // 4. Login to ECR
+        // 4. LOGIN TO ECR
         // ============================================================
 
         stage('Login to ECR') {
-
             steps {
-
                 sh '''
                     echo "========================================"
                     echo "Logging into Amazon ECR"
@@ -131,236 +132,276 @@ pipeline {
                     echo "ECR Registry: ${ECR_REGISTRY}"
 
                     aws ecr get-login-password \
-                      --region ${AWS_REGION} | \
+                        --region ${AWS_REGION} | \
                     docker login \
-                      --username AWS \
-                      --password-stdin \
-                      ${ECR_REGISTRY}
+                        --username AWS \
+                        --password-stdin \
+                        ${ECR_REGISTRY}
+
+                    echo "ECR login completed successfully."
+
+                    echo "========================================"
                 '''
             }
         }
 
 
         // ============================================================
-        // 5. Select Environment
+        // 5. SELECT ENVIRONMENT
         // ============================================================
 
         stage('Select Environment') {
-
             steps {
-
                 script {
 
                     def branch = env.BRANCH_NAME
 
                     echo "========================================"
-                    echo "Deployment Environment"
+                    echo "Environment Selection"
                     echo "========================================"
-
-                    echo "Building branch: ${branch}"
-
+                    echo "Building Branch: ${branch}"
 
                     if (branch == 'dev') {
 
                         env.NAMESPACE = 'dev'
                         env.VALUES_FILE = 'values-dev.yaml'
 
-                    }
-
-                    else if (branch == 'stage') {
+                    } else if (branch == 'stage') {
 
                         env.NAMESPACE = 'stage'
                         env.VALUES_FILE = 'values-stage.yaml'
 
-                    }
-
-                    else if (branch == 'prod') {
+                    } else if (branch == 'prod') {
 
                         env.NAMESPACE = 'prod'
                         env.VALUES_FILE = 'values-prod.yaml'
 
-                    }
-
-                    else {
+                    } else {
 
                         error(
                             "Unsupported branch: ${branch}. " +
-                            "Only dev, stage and prod branches are supported."
+                            "Only dev, stage and prod are supported."
                         )
                     }
 
-
-                    echo "Namespace : ${env.NAMESPACE}"
-                    echo "Values    : ${env.VALUES_FILE}"
+                    echo "Namespace  : ${env.NAMESPACE}"
+                    echo "Values File: ${env.VALUES_FILE}"
+                    echo "========================================"
                 }
             }
         }
 
 
         // ============================================================
-        // 6. Build Docker Image
+        // 6. VERIFY ECR REPOSITORY
         // ============================================================
 
-        stage('Build Docker Image') {
-
+        stage('Verify ECR Repository') {
             steps {
-
                 sh '''
                     echo "========================================"
-                    echo "Building Docker Image"
+                    echo "Checking ECR Repository"
                     echo "========================================"
 
-                    echo "Image:"
-                    echo "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+                    aws ecr describe-repositories \
+                        --region ${AWS_REGION} \
+                        --repository-names ${ECR_REPOSITORY}
 
+                    echo "ECR repository exists."
 
-                    docker build \
-                      -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} \
-                      .
+                    echo "========================================"
                 '''
             }
         }
 
 
         // ============================================================
-        // 7. Push Docker Image
+        // 7. BUILD DOCKER IMAGE
+        // ============================================================
+
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    echo "========================================"
+                    echo "Building Docker Image"
+                    echo "========================================"
+
+                    docker build \
+                        -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} \
+                        .
+
+                    echo ""
+                    echo "Docker image built successfully."
+
+                    docker images | grep ${ECR_REPOSITORY} || true
+
+                    echo "========================================"
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // 8. PUSH DOCKER IMAGE TO ECR
         // ============================================================
 
         stage('Push Docker Image') {
-
             steps {
-
                 sh '''
                     echo "========================================"
                     echo "Pushing Docker Image to ECR"
                     echo "========================================"
 
                     docker push \
-                      ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+                        ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+
+                    echo ""
+                    echo "Docker image pushed successfully."
+
+                    echo "Image:"
+                    echo "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+                    echo "========================================"
                 '''
             }
         }
 
 
         // ============================================================
-        // 8. Configure Kubernetes
+        // 9. CONFIGURE KUBERNETES
         // ============================================================
 
         stage('Configure Kubernetes') {
-
             steps {
-
                 sh '''
                     echo "========================================"
                     echo "Configuring Kubernetes"
                     echo "========================================"
 
                     aws eks update-kubeconfig \
-                      --region ${AWS_REGION} \
-                      --name ${EKS_CLUSTER}
+                        --region ${AWS_REGION} \
+                        --name ${EKS_CLUSTER}
 
-
-                    echo "========================================"
-                    echo "Kubernetes Cluster Info"
-                    echo "========================================"
-
+                    echo ""
+                    echo "Kubernetes Cluster:"
                     kubectl cluster-info
+
+                    echo ""
+                    echo "Kubernetes Nodes:"
+                    kubectl get nodes
+
+                    echo "========================================"
                 '''
             }
         }
 
 
         // ============================================================
-        // 9. Helm Lint
+        // 10. HELM LINT
         // ============================================================
 
         stage('Helm Lint') {
-
             steps {
-
                 sh '''
                     echo "========================================"
                     echo "Helm Lint"
                     echo "========================================"
 
-                    helm lint ./helm/python-registration
+                    helm lint \
+                        ./helm/python-registration
+
+                    echo "Helm lint completed successfully."
+
+                    echo "========================================"
                 '''
             }
         }
 
 
         // ============================================================
-        // 10. Deploy with Helm
+        // 11. HELM DEPLOYMENT
         // ============================================================
 
         stage('Deploy with Helm') {
-
             steps {
-
                 sh '''
                     echo "========================================"
-                    echo "Helm Deployment"
+                    echo "Deploying Application"
                     echo "========================================"
 
-                    echo "Release   : python-registration"
-                    echo "Namespace : ${NAMESPACE}"
-                    echo "Values    : ${VALUES_FILE}"
-                    echo "Image     : ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+                    echo "Cluster  : ${EKS_CLUSTER}"
+                    echo "Namespace: ${NAMESPACE}"
+                    echo "Values   : ${VALUES_FILE}"
+                    echo "Image    : ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
+                    helm upgrade --install \
+                        python-registration \
+                        ./helm/python-registration \
+                        --namespace ${NAMESPACE} \
+                        --create-namespace \
+                        -f ./helm/python-registration/${VALUES_FILE} \
+                        --set pythonApp.image.repository=${ECR_REGISTRY}/${ECR_REPOSITORY} \
+                        --set pythonApp.image.tag=${IMAGE_TAG}
 
-                    helm upgrade --install python-registration \
-                      ./helm/python-registration \
-                      --namespace ${NAMESPACE} \
-                      --create-namespace \
-                      -f ./helm/python-registration/${VALUES_FILE} \
-                      --set pythonApp.image.repository=${ECR_REGISTRY}/${ECR_REPOSITORY} \
-                      --set pythonApp.image.tag=${IMAGE_TAG}
+                    echo ""
+                    echo "Helm deployment completed."
+
+                    echo "========================================"
                 '''
             }
         }
 
 
         // ============================================================
-        // 11. Verify Deployment
+        // 12. VERIFY DEPLOYMENT
         // ============================================================
 
         stage('Verify Deployment') {
-
             steps {
-
                 sh '''
                     echo "========================================"
-                    echo "PODS"
+                    echo "Deployment Verification"
                     echo "========================================"
 
+                    echo ""
+                    echo "===== PODS ====="
                     kubectl get pods \
-                      -n ${NAMESPACE}
+                        -n ${NAMESPACE} \
+                        -o wide
 
-
-                    echo "========================================"
-                    echo "SERVICES"
-                    echo "========================================"
-
+                    echo ""
+                    echo "===== SERVICES ====="
                     kubectl get svc \
-                      -n ${NAMESPACE}
+                        -n ${NAMESPACE}
 
+                    echo ""
+                    echo "===== DEPLOYMENTS ====="
+                    kubectl get deployments \
+                        -n ${NAMESPACE}
 
-                    echo "========================================"
-                    echo "DEPLOYMENTS"
-                    echo "========================================"
+                    echo ""
+                    echo "===== REPLICASETS ====="
+                    kubectl get replicasets \
+                        -n ${NAMESPACE}
 
-                    kubectl get deployment \
-                      -n ${NAMESPACE}
-
-
-                    echo "========================================"
-                    echo "ROLLOUT STATUS"
-                    echo "========================================"
+                    echo ""
+                    echo "===== ROLLOUT STATUS ====="
 
                     kubectl rollout status \
-                      deployment/python-app \
-                      -n ${NAMESPACE} \
-                      --timeout=180s
+                        deployment/python-app \
+                        -n ${NAMESPACE} \
+                        --timeout=180s
+
+                    echo ""
+                    echo "===== FINAL POD STATUS ====="
+
+                    kubectl get pods \
+                        -n ${NAMESPACE}
+
+                    echo ""
+                    echo "Deployment verification completed."
+
+                    echo "========================================"
                 '''
             }
         }
@@ -374,7 +415,6 @@ pipeline {
     post {
 
         success {
-
             echo """
 ========================================
        DEPLOYMENT SUCCESSFUL
@@ -382,15 +422,14 @@ pipeline {
 
 Branch    : ${env.BRANCH_NAME}
 Namespace : ${env.NAMESPACE}
+Cluster   : ${env.EKS_CLUSTER}
 Image     : ${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.IMAGE_TAG}
 
 ========================================
 """
         }
 
-
         failure {
-
             echo """
 ========================================
          DEPLOYMENT FAILED
@@ -398,17 +437,19 @@ Image     : ${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.IMAGE_TAG}
 
 Branch    : ${env.BRANCH_NAME}
 Namespace : ${env.NAMESPACE}
+Cluster   : ${env.EKS_CLUSTER}
 
 ========================================
 """
         }
 
-
         always {
-
             sh '''
-                docker logout ${ECR_REGISTRY} || true
+                if [ -n "${ECR_REGISTRY}" ]; then
+                    docker logout "${ECR_REGISTRY}" || true
+                fi
             '''
         }
     }
 }
+```
