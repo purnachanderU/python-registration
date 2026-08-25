@@ -1,4 +1,3 @@
-```groovy
 pipeline {
 
     agent any
@@ -452,4 +451,3 @@ Cluster   : ${env.EKS_CLUSTER}
         }
     }
 }
-```
